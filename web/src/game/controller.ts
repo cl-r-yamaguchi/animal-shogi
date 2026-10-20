@@ -24,6 +24,8 @@ export interface GameView {
   lastMove: Move | null;
   thinking: boolean;
   canUndo: boolean;
+  /** エンジン呼び出しの失敗メッセージ。なければ null */
+  error: string | null;
 }
 
 export interface GameController {
@@ -34,6 +36,8 @@ export interface GameController {
   clickHand(kind: HandKind): void;
   clearSelection(): void;
   undo(): void;
+  /** エラー後に CPU の手番をやり直す */
+  retry(): Promise<void>;
 }
 
 export interface ControllerConfig {
@@ -63,6 +67,8 @@ export function createGameController(engine: EngineClient, config: ControllerCon
   let thinking = false;
   let legal: Move[] = []; // 人間手番時の合法手キャッシュ
   let undoStack: Snapshot[] = [];
+  let busy = false; // 人間の手の処理中（再入防止）
+  let error: string | null = null;
   let gameId = 0; // newGame で無効化するための世代番号
 
   const emptyState = (): GameState => ({
@@ -95,7 +101,8 @@ export function createGameController(engine: EngineClient, config: ControllerCon
       targets: computeTargets(),
       lastMove,
       thinking,
-      canUndo: !thinking && status.type === "playing" && undoStack.length > 0,
+      error,
+      canUndo: !thinking && !busy && status.type === "playing" && undoStack.length > 0,
     };
   }
 
@@ -105,7 +112,7 @@ export function createGameController(engine: EngineClient, config: ControllerCon
   }
 
   const isHumanTurn = () =>
-    state !== null && !thinking && status.type === "playing" && state.turn === humanSide;
+    state !== null && !thinking && !busy && status.type === "playing" && state.turn === humanSide;
 
   async function refreshLegal() {
     legal = state && status.type === "playing" ? await engine.legalMoves(state) : [];
@@ -115,6 +122,7 @@ export function createGameController(engine: EngineClient, config: ControllerCon
   async function cpuTurnIfNeeded(id: number) {
     if (!state || status.type !== "playing" || state.turn === humanSide) return;
     thinking = true;
+    error = null;
     selection = { type: "none" };
     legal = [];
     emit();
@@ -132,6 +140,8 @@ export function createGameController(engine: EngineClient, config: ControllerCon
       status = await engine.gameStatus(state);
       if (id !== gameId) return;
       await refreshLegal();
+    } catch (e) {
+      if (id === gameId) error = e instanceof Error ? e.message : String(e);
     } finally {
       if (id === gameId) {
         thinking = false;
@@ -148,12 +158,25 @@ export function createGameController(engine: EngineClient, config: ControllerCon
     lastMove = null;
     undoStack = [];
     thinking = false;
+    busy = false;
+    error = null;
     legal = [];
-    state = await engine.initialState();
-    if (id !== gameId) return;
-    status = await engine.gameStatus(state);
-    if (id !== gameId) return;
-    await refreshLegal();
+    state = null;
+    status = { type: "playing" };
+    emit();
+    try {
+      state = await engine.initialState();
+      if (id !== gameId) return;
+      status = await engine.gameStatus(state);
+      if (id !== gameId) return;
+      await refreshLegal();
+    } catch (e) {
+      if (id === gameId) {
+        error = e instanceof Error ? e.message : String(e);
+        emit();
+      }
+      return;
+    }
     emit();
     await cpuTurnIfNeeded(id);
   }
@@ -169,20 +192,31 @@ export function createGameController(engine: EngineClient, config: ControllerCon
           ? { type: "move", from: selection.square, to: square }
           : { type: "drop", kind: selection.kind, to: square };
       const before = state;
-      const applied = await engine.applyMove(before, move);
-      if (id !== gameId) return;
-      if (!applied.ok) {
+      busy = true;
+      try {
+        const applied = await engine.applyMove(before, move);
+        if (id !== gameId) return;
+        if (!applied.ok) {
+          selection = { type: "none" };
+          emit();
+          return;
+        }
+        undoStack.push({ state: before, status, lastMove, legal });
+        state = applied.value;
+        lastMove = move;
         selection = { type: "none" };
-        emit();
+        status = await engine.gameStatus(state);
+        if (id !== gameId) return;
+        await refreshLegal();
+      } catch (e) {
+        if (id === gameId) {
+          error = e instanceof Error ? e.message : String(e);
+          emit();
+        }
         return;
+      } finally {
+        if (id === gameId) busy = false;
       }
-      undoStack.push({ state: before, status, lastMove, legal });
-      state = applied.value;
-      lastMove = move;
-      selection = { type: "none" };
-      status = await engine.gameStatus(state);
-      if (id !== gameId) return;
-      await refreshLegal();
       emit();
       await cpuTurnIfNeeded(id);
       return;
@@ -215,7 +249,7 @@ export function createGameController(engine: EngineClient, config: ControllerCon
   }
 
   function undo() {
-    if (thinking || status.type !== "playing") return;
+    if (thinking || busy || status.type !== "playing") return;
     const snap = undoStack.pop();
     if (!snap) return;
     gameId++; // 進行中の非同期処理を無効化
@@ -224,7 +258,13 @@ export function createGameController(engine: EngineClient, config: ControllerCon
     lastMove = snap.lastMove;
     legal = snap.legal;
     selection = { type: "none" };
+    error = null;
     emit();
+  }
+
+  async function retry() {
+    if (thinking || busy || !error) return;
+    await cpuTurnIfNeeded(gameId);
   }
 
   return {
@@ -238,5 +278,6 @@ export function createGameController(engine: EngineClient, config: ControllerCon
     clickHand,
     clearSelection,
     undo,
+    retry,
   };
 }

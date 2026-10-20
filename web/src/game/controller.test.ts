@@ -206,3 +206,68 @@ describe("mockApply", () => {
     expect(r.ok && r.value.board[1]?.kind).toBe("hen");
   });
 });
+
+describe("再入防止とエラー処理", () => {
+  it("applyMove 待ち中の二重クリックは無視される", async () => {
+    const base = createMockEngine();
+    let calls = 0;
+    let chooseCalls = 0;
+    const c = make({
+      ...base,
+      applyMove: async (s, m) => { calls++; await new Promise((r) => setTimeout(r, 10)); return base.applyMove(s, m); },
+      chooseMove: async (s, l, o) => { chooseCalls++; return base.chooseMove(s, l, o); },
+    });
+    await c.newGame({ humanSide: "sente", level: 1 });
+    await c.clickSquare(7);
+    const p1 = c.clickSquare(4);
+    const p2 = c.clickSquare(4);
+    await Promise.all([p1, p2]);
+    expect(chooseCalls).toBe(1);
+    expect(calls).toBe(2); // 人間1回 + CPU1回
+    c.undo();
+    expect(c.getView().state.history).toHaveLength(1);
+    expect(c.getView().canUndo).toBe(false);
+  });
+
+  it("CPU のエラーは error に出て、retry で再開できる", async () => {
+    const base = createMockEngine();
+    let fail = true;
+    const c = make({
+      ...base,
+      chooseMove: async (s, l, o) => { if (fail) throw new Error("boom"); return base.chooseMove(s, l, o); },
+    });
+    await c.newGame({ humanSide: "sente", level: 1 });
+    await c.clickSquare(10);
+    await c.clickSquare(6);
+    expect(c.getView().error).toBe("boom");
+    expect(c.getView().thinking).toBe(false);
+    fail = false;
+    await c.retry();
+    expect(c.getView().error).toBeNull();
+    expect(c.getView().state.turn).toBe("sente");
+    expect(c.getView().state.history).toHaveLength(3);
+  });
+
+  it("エラー後に undo できる", async () => {
+    const base = createMockEngine();
+    const c = make({ ...base, chooseMove: async () => { throw new Error("x"); } });
+    await c.newGame({ humanSide: "sente", level: 1 });
+    await c.clickSquare(10);
+    await c.clickSquare(6);
+    expect(c.getView().canUndo).toBe(true);
+    c.undo();
+    expect(c.getView().error).toBeNull();
+    expect(c.getView().state.history).toHaveLength(1);
+  });
+
+  it("newGame は開始時に古い盤面を即クリアして通知する", async () => {
+    const c = make();
+    await c.newGame({ humanSide: "sente", level: 1 });
+    await c.clickSquare(7);
+    const seen: number[] = [];
+    c.subscribe((v) => seen.push(v.state.history.length));
+    await c.newGame({ humanSide: "sente", level: 1 });
+    expect(seen[0]).toBe(0);
+    expect(c.getView().selection).toEqual({ type: "none" });
+  });
+});

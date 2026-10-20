@@ -86,45 +86,54 @@ export function mountUI(root: HTMLElement, ctl: GameController, initial: { human
   let humanSide = initial.humanSide;
   let level = initial.level;
 
-  const render = (view: GameView) => {
-    root.replaceChildren();
-    const app = el("div", "app");
-    app.append(el("h1", "title", "どうぶつしょうぎ"));
+  // 設定UIは初回のみ生成し、毎回の再描画で作り直さない（ドロップダウンを閉じさせないため）
+  const app = el("div", "app");
+  const dynTop = el("div", "dyn");
+  const settings = el("div", "settings");
+  const dynBottom = el("div", "dyn");
+  app.append(el("h1", "title", "どうぶつしょうぎ"), dynTop, settings, dynBottom);
 
+  const sideSel = el("select");
+  for (const s of ["sente", "gote"] as Side[]) {
+    const o = el("option", "", SIDE_NAME[s]);
+    o.value = s;
+    o.selected = s === humanSide;
+    sideSel.append(o);
+  }
+  sideSel.addEventListener("change", () => (humanSide = sideSel.value as Side));
+  const lvSel = el("select");
+  for (const [v, t] of [[1, "よわい"], [2, "ふつう"], [3, "つよい"]] as const) {
+    const o = el("option", "", `レベル${v} ${t}`);
+    o.value = String(v);
+    o.selected = v === level;
+    lvSel.append(o);
+  }
+  lvSel.addEventListener("change", () => (level = Number(lvSel.value) as 1 | 2 | 3));
+  const start = el("button", "btn primary", "新しい対局");
+  start.type = "button";
+  start.addEventListener("click", () => void ctl.newGame({ humanSide, level }));
+  const undo = el("button", "btn", "やり直し");
+  undo.type = "button";
+  undo.addEventListener("click", () => ctl.undo());
+  settings.append(sideSel, lvSel, start, undo);
+  root.replaceChildren(app);
+
+  const render = (view: GameView) => {
+    undo.disabled = !view.canUndo;
     const st = el("div", "status", statusText(view));
     if (view.thinking) st.classList.add("thinking");
-    app.append(st);
-
     const opponent: Side = view.humanSide === "sente" ? "gote" : "sente";
-    app.append(handArea(view, opponent, ctl), boardEl(view, ctl), handArea(view, view.humanSide, ctl));
+    dynTop.replaceChildren(st, handArea(view, opponent, ctl), boardEl(view, ctl), handArea(view, view.humanSide, ctl));
 
-    const settings = el("div", "settings");
-    const sideSel = el("select");
-    for (const s of ["sente", "gote"] as Side[]) {
-      const o = el("option", "", `${SIDE_NAME[s]}`);
-      o.value = s;
-      o.selected = s === humanSide;
-      sideSel.append(o);
+    const bottom: HTMLElement[] = [];
+    if (view.error) {
+      const box = el("div", "error", `エラー: ${view.error}`);
+      const retry = el("button", "btn", "再試行");
+      retry.type = "button";
+      retry.addEventListener("click", () => void ctl.retry());
+      box.append(retry);
+      bottom.push(box);
     }
-    sideSel.addEventListener("change", () => (humanSide = sideSel.value as Side));
-    const lvSel = el("select");
-    for (const [v, t] of [[1, "よわい"], [2, "ふつう"], [3, "つよい"]] as const) {
-      const o = el("option", "", `レベル${v} ${t}`);
-      o.value = String(v);
-      o.selected = v === level;
-      lvSel.append(o);
-    }
-    lvSel.addEventListener("change", () => (level = Number(lvSel.value) as 1 | 2 | 3));
-    const start = el("button", "btn primary", "新しい対局");
-    start.type = "button";
-    start.addEventListener("click", () => void ctl.newGame({ humanSide, level }));
-    const undo = el("button", "btn", "やり直し");
-    undo.type = "button";
-    undo.disabled = !view.canUndo;
-    undo.addEventListener("click", () => ctl.undo());
-    settings.append(sideSel, lvSel, start, undo);
-    app.append(settings);
-
     if (view.status.type !== "playing") {
       const overlay = el("div", "overlay");
       const dlg = el("div", "dialog");
@@ -138,9 +147,9 @@ export function mountUI(root: HTMLElement, ctl: GameController, initial: { human
       again.addEventListener("click", () => void ctl.newGame({ humanSide, level }));
       dlg.append(again);
       overlay.append(dlg);
-      app.append(overlay);
+      bottom.push(overlay);
     }
-    root.append(app);
+    dynBottom.replaceChildren(...bottom);
   };
 
   ctl.subscribe(render);

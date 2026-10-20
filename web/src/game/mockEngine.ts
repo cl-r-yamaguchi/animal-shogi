@@ -50,6 +50,11 @@ export function mockStatus(s: GameState): GameStatus {
   return { type: "playing" };
 }
 
+function sameMove(a: Move, b: Move): boolean {
+  if (a.type === "move") return b.type === "move" && a.from === b.from && a.to === b.to;
+  return b.type === "drop" && a.kind === b.kind && a.to === b.to;
+}
+
 export function mockLegalMoves(s: GameState): Move[] {
   if (mockStatus(s).type !== "playing") return [];
   const out: Move[] = [];
@@ -78,7 +83,7 @@ export function mockLegalMoves(s: GameState): Move[] {
 
 export function mockApply(s: GameState, mv: Move): Result<GameState, MoveError> {
   if (mockStatus(s).type !== "playing") return { ok: false, error: "gameOver" };
-  const legal = mockLegalMoves(s).some((m) => JSON.stringify(m) === JSON.stringify(mv));
+  const legal = mockLegalMoves(s).some((m) => sameMove(m, mv));
   if (!legal) return { ok: false, error: mv.type === "drop" ? "noPieceInHand" : "illegalMovement" };
   const board = s.board.slice();
   const hands = { sente: { ...s.hands.sente }, gote: { ...s.hands.gote } };
