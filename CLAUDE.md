@@ -6,6 +6,7 @@ Rust(WASM) でルール判定とAI、TypeScript(Vite) でUIを実装する人間
 - **インターフェース（型・JSON形式・関数シグネチャ・ファイル所有権）は `docs/spec.md` が正。** 変更が必要なら、実装前に spec を更新する相談をする。
 - **担当外のファイルは編集しない。** 担当は A: `engine/src/rules.rs`・`wasm.rs`・`web/src/engine/*`、B: `engine/src/ai*`・`examples/selfplay.rs`、C: `web/src/game/*`・`ui/*`・`main.ts`・`style.css`。共有ファイル（`Cargo.toml`・`lib.rs`・`types.rs`・`web/src/types.ts`・Vite設定）はリードのみ（詳細は spec §3）。
 - テスト: Rust は `cd engine && cargo test`、WASM ビルドは `cd engine && wasm-pack build --target web --out-dir ../web/src/wasm/pkg`、Web は `cd web && npm test`（開発サーバは `npm run dev`）。
+- 実アプリをブラウザで動かして確認するときは `.claude/skills/run-animal-shogi`（`/run-animal-shogi`）の手順に従う。
 - 回答・コメント・Issue/PR は日本語で書く。
 
 ## 開発フロー
