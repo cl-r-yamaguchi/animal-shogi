@@ -295,8 +295,45 @@ impl Board {
         v.iter().map(to_move).collect()
     }
 
-    pub fn play(&self, mv: &Move) -> Board {
-        self.make(&from_move(mv))
+    /// 手を適用する。不正な手・終局後は盤面を変えず Err を返す（panic しない）。
+    pub fn play(&self, mv: &Move) -> Result<Board, MoveError> {
+        if self.outcome() != Outcome::Playing {
+            return Err(MoveError::GameOver);
+        }
+        let m = from_move(mv);
+        let mut legal = Vec::new();
+        self.gen(&mut legal);
+        if legal.contains(&m) {
+            return Ok(self.make(&m));
+        }
+        Err(match *mv {
+            Move::Move { from, to } => {
+                if from >= 12 || to >= 12 {
+                    MoveError::InvalidSquare
+                } else {
+                    let c = self.cells[from as usize];
+                    let t = self.cells[to as usize];
+                    if c == 0 {
+                        MoveError::NoPiece
+                    } else if (c - 1) / 5 != self.turn as u8 {
+                        MoveError::NotOwnPiece
+                    } else if t != 0 && (t - 1) / 5 == self.turn as u8 {
+                        MoveError::OccupiedByOwn
+                    } else {
+                        MoveError::IllegalMovement
+                    }
+                }
+            }
+            Move::Drop { to, .. } => {
+                if to >= 12 {
+                    MoveError::InvalidSquare
+                } else if m.kind < 3 && self.hands[self.turn][m.kind as usize] == 0 {
+                    MoveError::NoPieceInHand
+                } else {
+                    MoveError::SquareOccupied
+                }
+            }
+        })
     }
 }
 
@@ -363,6 +400,18 @@ impl Search {
             return WIN - ply;
         }
         if depth == 0 {
+            // 相手のライオンが最奥段にいる場合、こちらが取れなければ相手のトライ勝ち
+            let opp = 1 + (1 - b.turn) as u8 * 5 + LION;
+            let r = goal_row(1 - b.turn) as usize;
+            if (0..3).any(|c| b.cells[r * 3 + c] == opp) {
+                let mut v = Vec::with_capacity(32);
+                b.gen(&mut v);
+                return if v.iter().any(|m| b.captures_lion(m)) {
+                    WIN - (ply + 1)
+                } else {
+                    -(WIN - (ply + 2))
+                };
+            }
             return b.eval();
         }
         let mut moves = Vec::with_capacity(32);
@@ -395,14 +444,19 @@ impl Search {
     }
 }
 
-/// 取る手を優先（安定ソート）。
+/// 取る手を優先（安定ソート）。価値順: ライオン > ゾウ/キリン/ニワトリ > ヒヨコ > 取らない手。
+
 fn order(b: &Board, moves: &mut [IMove]) {
     moves.sort_by_key(|m| {
         let t = b.cells[m.to as usize];
         if m.from == DROP || t == 0 {
             0
         } else {
-            -1 - ((t - 1) % 5) as i32
+            match (t - 1) % 5 {
+                LION => -100,
+                CHICK => -10,
+                _ => -50,
+            }
         }
     });
 }
@@ -459,36 +513,97 @@ pub fn choose_move(state: &GameState, opts: &AiOptions) -> Option<AiResult> {
     let limit = if opts.max_nodes == 0 { DEFAULT_MAX_NODES } else { opts.max_nodes };
     let mut s = Search { nodes: 0, limit: 0, aborted: false };
     let mut result: Option<(IMove, i32, u32)> = None;
+    let mut prev_best: Option<IMove> = None;
     for d in 1..=MAX_DEPTH {
         s.limit = if d == 1 { 0 } else { limit }; // 深さ1は必ず完了させる
-        if let Some((pm, _, _)) = result {
+        if let Some(pm) = prev_best {
             if let Some(pos) = moves.iter().position(|m| *m == pm) {
                 moves[..=pos].rotate_right(1); // 前回の最善手を先頭へ
             }
         }
-        let mut alpha = -WIN * 2;
-        let mut best: Option<(IMove, i32)> = None;
+        // 同点手を厳密に拾うため、下限は best-1（best と同値の手は厳密値で返る）
+        let mut best_score = -WIN * 2;
+        let mut ties: Vec<IMove> = Vec::new();
         for m in &moves {
-            let sc = -s.negamax(&b.make(m), d - 1, -WIN * 2, -alpha, 1);
+            let lower = if ties.is_empty() { -WIN * 2 } else { best_score - 1 };
+            let sc = -s.negamax(&b.make(m), d - 1, -WIN * 2, -lower, 1);
             if s.aborted {
                 break;
             }
-            if best.is_none() || sc > alpha {
-                alpha = alpha.max(sc);
-                if best.map_or(true, |(_, bs)| sc > bs) {
-                    best = Some((*m, sc));
-                }
+            if ties.is_empty() || sc > best_score {
+                best_score = sc;
+                ties.clear();
+                ties.push(*m);
+            } else if sc == best_score {
+                ties.push(*m);
             }
         }
         if s.aborted {
             break;
         }
-        let (m, sc) = best.unwrap();
-        result = Some((m, sc, d));
-        if sc.abs() > WIN - 100 {
+        let m = ties[rng.below(ties.len())];
+        prev_best = Some(ties[0]);
+        result = Some((m, best_score, d));
+        if best_score.abs() > WIN - 100 {
             break; // 勝敗確定
         }
     }
     let (m, score, depth) = result.unwrap();
     Some(AiResult { r#move: to_move(&m), score, depth, nodes: s.nodes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn board(cells: &str, turn: usize) -> Board {
+        let mut c = [0u8; 12];
+        for (i, ch) in cells.chars().enumerate() {
+            if ch == '.' {
+                continue;
+            }
+            let k = "lgech".find(ch.to_ascii_lowercase()).unwrap() as u8;
+            c[i] = 1 + if ch.is_ascii_uppercase() { 0 } else { 5 } + k;
+        }
+        Board { cells: c, hands: [[0; 3]; 2], turn }
+    }
+
+    #[test]
+    fn order_prefers_valuable_captures() {
+        // 先手キリン(4)が 後手ライオン(1)・ヒヨコ(3)・ゾウ(5) を取れる
+        let b = board(".l.cGe.....L", 0);
+        let mut v = Vec::new();
+        b.gen(&mut v);
+        order(&b, &mut v);
+        let caps: Vec<u8> = v.iter().filter(|m| b.cells[m.to as usize] != 0).map(|m| m.to).collect();
+        assert_eq!(caps, vec![1, 5, 3]); // ライオン > ゾウ > ヒヨコ
+        assert_eq!(v[0].to, 1);
+    }
+
+    #[test]
+    fn leaf_sees_unanswered_try() {
+        // 後手ライオンが後手の最奥段(sq10)にいて、先手(手番)は取れない → 負け評価
+        let b = board("...L......l.", 0);
+        let mut s = Search { nodes: 0, limit: 0, aborted: false };
+        assert!(s.negamax(&b, 0, -2 * WIN, 2 * WIN, 0) < -9000);
+        // 先手が取れるなら勝ち評価
+        let b = board("..........lG", 0);
+        let mut s = Search { nodes: 0, limit: 0, aborted: false };
+        assert!(s.negamax(&b, 0, -2 * WIN, 2 * WIN, 0) > 9000);
+    }
+
+    #[test]
+    fn play_rejects_invalid_moves() {
+        let b = Board::initial();
+        for mv in [
+            Move::Move { from: 0, to: 3 },  // 相手の駒
+            Move::Move { from: 5, to: 4 },  // 空
+            Move::Move { from: 12, to: 4 }, // 盤外
+            Move::Move { from: 10, to: 7 }, // 自駒
+            Move::Drop { kind: HandKind::Chick, to: 5 }, // 持ち駒なし
+        ] {
+            assert!(b.play(&mv).is_err(), "{mv:?}");
+        }
+        assert!(b.play(&Move::Move { from: 7, to: 4 }).is_ok());
+    }
 }

@@ -18,7 +18,7 @@ fn play(a: u8, b: u8, a_sente: bool, seed: u32, max_nodes: u32) -> i32 {
         let level = if (board.turn() == Side::Sente) == a_sente { a } else { b };
         let opts = AiOptions { level, max_nodes, seed: seed.wrapping_mul(1000).wrapping_add(ply) };
         let r = choose_move(&board.to_state(), &opts).expect("合法手あり");
-        board = board.play(&r.r#move);
+        board = board.play(&r.r#move).expect("AIの手は合法");
     }
     0
 }

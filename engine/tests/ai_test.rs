@@ -42,7 +42,7 @@ fn sample_states() -> Vec<GameState> {
             if mv.is_empty() {
                 break;
             }
-            b = b.play(&mv[(seed * 7 + ply * 13) % mv.len()]);
+            b = b.play(&mv[(seed * 7 + ply * 13) % mv.len()]).unwrap();
         }
     }
     out
@@ -193,4 +193,19 @@ fn matches_rules_legal_moves() {
             assert_eq!(Board::from_state(&s).to_state().board, s.board);
         }
     }
+}
+
+#[test]
+fn level3_breaks_ties_by_seed() {
+    // 左右対称な局面（列1にライオンのみ）では鏡像の手が同点になりうるため、seed で選択が変わる
+    let boards = [".l...L.g....", ".l...L.G....", ".l.....L....", ".l..l..L....", ".l..L...L..."];
+    let varies = boards.iter().any(|b| {
+        let s = st(b, [0; 3], [0; 3], Side::Sente);
+        let picks: std::collections::HashSet<String> = (0..40)
+            .filter_map(|seed| choose_move(&s, &AiOptions { level: 3, max_nodes: 5_000, seed }))
+            .map(|r| format!("{:?}", r.r#move))
+            .collect();
+        picks.len() > 1
+    });
+    assert!(varies);
 }
