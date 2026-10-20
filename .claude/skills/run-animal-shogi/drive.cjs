@@ -13,7 +13,7 @@ const out = arg("out", "shots");
 const url = arg("url", "http://localhost:5173/");
 fs.mkdirSync(out, { recursive: true });
 
-(async () => {
+async function main() {
   const browser = await chromium.launch({ channel: "chrome" });
   const page = await (await browser.newContext({ viewport: { width: 390, height: 800 } })).newPage();
   const errors = [];
@@ -29,18 +29,20 @@ fs.mkdirSync(out, { recursive: true });
   await page.screenshot({ path: `${out}/1-start.png` });
 
   const cells = page.locator(".board .cell");
-  const header = async () => (await page.locator("body").innerText()).split("後手(CPU)")[0];
+  const header = async () => (await page.locator("body").innerText()).split(/[先後]手\(CPU\)/)[0];
   let turns = 0;
   let finished = false;
   for (; turns < 120; turns++) {
     const head = await header();
     if (/勝ち|引き分け/.test(head)) { finished = true; break; }
     if (!head.includes("あなたの番")) { await page.waitForTimeout(500); continue; }
-    for (let i = 0; i < 12; i++) {
+    let moved = false;
+    for (let i = 0; i < 12 && !moved; i++) {
       await cells.nth(i).click();
       const t = page.locator(".cell.target");
-      if (await t.count()) { await t.nth(Math.floor(Math.random() * (await t.count()))).click(); break; }
+      if (await t.count()) { await t.nth(Math.floor(Math.random() * (await t.count()))).click(); moved = true; }
     }
+    if (!moved) { errors.push("人間の手を選べなかった（持ち駒のみ等）"); break; }
     await page.waitForTimeout(600);
   }
   await page.screenshot({ path: `${out}/2-end.png` });
@@ -48,5 +50,10 @@ fs.mkdirSync(out, { recursive: true });
   console.log("result:", (await header()).split("\n").slice(0, 3).join(" / "));
   console.log("errors:", JSON.stringify(errors));
   await browser.close();
-  process.exit(finished && errors.length === 0 ? 0 : 1);
-})();
+  return finished && errors.length === 0 ? 0 : 1;
+}
+
+main().then(
+  (code) => process.exit(code),
+  (e) => { console.error("drive failed:", e.message); process.exit(1); }
+);
