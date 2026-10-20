@@ -173,7 +173,6 @@ fn level3_default_max_nodes_when_zero() {
 
 /// rules.rs が実装された後に外す。理由: rules は担当Aが並行実装中で、AI ブランチでは todo!() のため。
 #[test]
-#[ignore = "rules.rs 実装後に有効化（担当Aの実装待ち）"]
 fn matches_rules_legal_moves() {
     use animal_shogi_engine::rules;
     for seed in 0..100usize {
