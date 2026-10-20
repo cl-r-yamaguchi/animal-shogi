@@ -17,7 +17,38 @@ fn err<E: Serialize>(e: E) -> String {
 }
 
 fn parse_state(json: &str) -> Result<GameState, String> {
-    serde_json::from_str(json).map_err(|_| err("invalidJson"))
+    let state: GameState = serde_json::from_str(json).map_err(|_| err("invalidJson"))?;
+    if valid_state(&state) {
+        Ok(state)
+    } else {
+        Err(err("invalidState"))
+    }
+}
+
+/// 局面の中身の検証（持ち駒 0..=2、駒種ごとの総数が 2 以内、history 非空）。
+fn valid_state(state: &GameState) -> bool {
+    if state.history.is_empty() {
+        return false;
+    }
+    let (s, g) = (&state.hands.sente, &state.hands.gote);
+    if [s, g].iter().any(|h| h.giraffe > 2 || h.elephant > 2 || h.chick > 2) {
+        return false;
+    }
+    let mut total = [
+        s.giraffe + g.giraffe,
+        s.elephant + g.elephant,
+        s.chick + g.chick,
+        0, // lion
+    ];
+    for p in state.board.iter().flatten() {
+        match p.kind {
+            PieceKind::Giraffe => total[0] += 1,
+            PieceKind::Elephant => total[1] += 1,
+            PieceKind::Chick | PieceKind::Hen => total[2] += 1,
+            PieceKind::Lion => total[3] += 1,
+        }
+    }
+    total.iter().all(|&n| n <= 2)
 }
 
 #[wasm_bindgen(js_name = initialState)]

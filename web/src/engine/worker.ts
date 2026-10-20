@@ -27,22 +27,29 @@ const handlers: Record<string, (...args: any[]) => string> = {
     chooseMove(json(state), level, maxNodes, seed),
 };
 
-init().then(
+const ready = init().then(
   () => {
     self.postMessage({ ready: true });
   },
   (e: unknown) => {
     self.postMessage({ ready: false, error: String(e) });
+    throw e;
   },
 );
 
+// init 完了前に届いたメッセージは、完了を待ってから処理する（到着順は維持される）。
 self.onmessage = (ev: MessageEvent<Request>) => {
   const { id, method, args } = ev.data;
-  try {
-    const h = handlers[method];
-    if (!h) throw new Error(`unknownMethod: ${method}`);
-    self.postMessage({ id, result: JSON.parse(h(...args)) });
-  } catch (e) {
-    self.postMessage({ id, error: e instanceof Error ? e.message : String(e) });
-  }
+  ready.then(
+    () => {
+      try {
+        const h = handlers[method];
+        if (!h) throw new Error(`unknownMethod: ${method}`);
+        self.postMessage({ id, result: JSON.parse(h(...args)) });
+      } catch (e) {
+        self.postMessage({ id, error: e instanceof Error ? e.message : String(e) });
+      }
+    },
+    () => self.postMessage({ id, error: "wasm init failed" }),
+  );
 };

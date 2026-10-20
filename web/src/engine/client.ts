@@ -86,7 +86,7 @@ export function createEngineClient(
 
     worker.onmessage = (ev) => {
       const data = ev.data;
-      if (data && "ready" in data) {
+      if (data && typeof data === "object" && "ready" in data) {
         if (data.ready) {
           ready = true;
           resolveClient(client);
@@ -96,7 +96,8 @@ export function createEngineClient(
         }
         return;
       }
-      const p = pending.get(data?.id);
+      if (!data || typeof data !== "object") return;
+      const p = pending.get(data.id);
       if (!p) return;
       pending.delete(data.id);
       if ("error" in data) p.reject(new Error(String(data.error)));
@@ -105,6 +106,9 @@ export function createEngineClient(
 
     worker.onerror = (ev) => {
       const e = new Error(ev?.message ?? "worker error");
+      // 以降の呼び出しはハングさせず即 reject する
+      disposed = true;
+      worker.terminate();
       if (!ready) rejectClient(e);
       rejectAll(e);
     };

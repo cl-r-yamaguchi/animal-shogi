@@ -291,3 +291,39 @@ fn wasm_wrappers() {
     let r: serde_json::Value = serde_json::from_str(&game_status_js(&state_json)).unwrap();
     assert_eq!(r["value"]["type"], "playing");
 }
+
+#[test]
+fn wasm_rejects_invalid_state() {
+    use animal_shogi_engine::wasm::*;
+    let mut v = serde_json::to_value(initial_state()).unwrap();
+    v["hands"]["sente"]["chick"] = serde_json::json!(200);
+    let r: serde_json::Value = serde_json::from_str(&legal_moves_js(&v.to_string())).unwrap();
+    assert_eq!(r, serde_json::json!({"ok": false, "error": "invalidState"}));
+    let mut v = serde_json::to_value(initial_state()).unwrap();
+    v["history"] = serde_json::json!([]);
+    let r: serde_json::Value = serde_json::from_str(&game_status_js(&v.to_string())).unwrap();
+    assert_eq!(r["error"], "invalidState");
+    let mut v = serde_json::to_value(initial_state()).unwrap();
+    v["board"] = serde_json::json!([null]);
+    let r: serde_json::Value = serde_json::from_str(&game_status_js(&v.to_string())).unwrap();
+    assert!(r["ok"] == false);
+    // 駒種の総数超過 (ヒヨコ 2 + 持ち駒 2)
+    let mut v = serde_json::to_value(initial_state()).unwrap();
+    v["hands"]["gote"]["chick"] = serde_json::json!(2);
+    let r: serde_json::Value = serde_json::from_str(&game_status_js(&v.to_string())).unwrap();
+    assert_eq!(r["error"], "invalidState");
+}
+
+#[test]
+fn lion_missing_is_capture_win() {
+    // 後手ライオンなし → 先手勝ち
+    let s = st("....L.......", (0, 0, 0), (0, 0, 0), Side::Sente);
+    assert_eq!(game_status(&s), GameStatus::Won { winner: Side::Sente, reason: WinReason::CaptureLion });
+    // 先手ライオンなし（同一側2体の後手のみ）
+    let s = st("l..l........", (0, 0, 0), (0, 0, 0), Side::Sente);
+    assert_eq!(game_status(&s), GameStatus::Won { winner: Side::Gote, reason: WinReason::CaptureLion });
+    // 両者なしでも panic しない
+    let s = st("............", (0, 0, 0), (0, 0, 0), Side::Sente);
+    assert!(matches!(game_status(&s), GameStatus::Won { .. }));
+    assert!(legal_moves(&s).is_empty());
+}

@@ -199,7 +199,8 @@ pub fn apply_move(state: &GameState, mv: &Move) -> Result<GameState, MoveError> 
                     PieceKind::Lion => None,
                 };
                 if let Some(k) = captured {
-                    *hand_count_mut(hand_of_mut(&mut next, side), k) += 1;
+                    let c = hand_count_mut(hand_of_mut(&mut next, side), k);
+                    *c = c.saturating_add(1);
                 }
             }
             let mut moved = piece;
@@ -235,16 +236,26 @@ pub fn apply_move(state: &GameState, mv: &Move) -> Result<GameState, MoveError> 
 }
 
 pub fn game_status(state: &GameState) -> GameStatus {
-    // 1. キャッチ
-    let lions: Vec<Piece> = state
-        .board
-        .iter()
-        .flatten()
-        .filter(|p| p.kind == PieceKind::Lion)
-        .copied()
-        .collect();
-    if lions.len() == 1 {
-        return GameStatus::Won { winner: lions[0].owner, reason: WinReason::CaptureLion };
+    // 1. キャッチ（いずれかの側にライオンがいない）
+    let count = |side: Side| {
+        state
+            .board
+            .iter()
+            .flatten()
+            .filter(|p| p.kind == PieceKind::Lion && p.owner == side)
+            .count()
+    };
+    let (ls, lg) = (count(Side::Sente), count(Side::Gote));
+    if ls == 0 || lg == 0 {
+        // 両者ともいない局面は到達不可。直前に指した側の勝ちとして扱う。
+        let winner = if ls == 0 && lg == 0 {
+            opponent(state.turn)
+        } else if ls == 0 {
+            Side::Gote
+        } else {
+            Side::Sente
+        };
+        return GameStatus::Won { winner, reason: WinReason::CaptureLion };
     }
     // 2. トライ
     let s = state.turn;

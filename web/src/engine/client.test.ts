@@ -77,4 +77,18 @@ describe("createEngineClient", () => {
     expect(m.isTerminated()).toBe(true);
     await expect(c.initialState()).rejects.toThrow("disposed");
   });
+
+  it("onerror で terminate し、保留中と以降の呼び出しを reject する", async () => {
+    let hold = true;
+    const m = mockWorker(() => ({ result: { ok: true, value: 1 } }));
+    const orig = m.w.postMessage.bind(m.w);
+    m.w.postMessage = (msg: any) => (hold ? void 0 : orig(msg));
+    const c = await createEngineClient(() => m.w);
+    const p = c.initialState();
+    m.w.onerror?.({ message: "crash" });
+    await expect(p).rejects.toThrow("crash");
+    expect(m.isTerminated()).toBe(true);
+    hold = false;
+    await expect(c.initialState()).rejects.toThrow("disposed");
+  });
 });
