@@ -474,3 +474,12 @@ move 7→4（ヒヨコが相手のヒヨコを取る）, move 10→6, move 10→
 - `cargo test` と `npm test` がすべて通る。
 - `wasm-pack build` 後に `npm run dev` でブラウザから最後まで対局できる（先手/後手・3 レベル）。
 - 各担当は、自分の担当外のファイルを変更していないこと（`git diff --stat` で確認）。
+
+---
+
+## 8. 実装で確定した追加仕様
+- `createEngineClient(workerFactory?)`: テスト用の任意引数。Worker メッセージは、リクエスト `{id, method, args}`、成功 `{id, result}`（result は §4.4 の Result 封筒）、失敗 `{id, error}`、初期化通知 `{ready:true}` / `{ready:false, error}`。`chooseMove` の seed 省略時は TS 側で乱数を生成する。
+- WASM は不正な局面（持ち駒・駒数の超過など）に `invalidState` を返す。ライオンが盤上にいない側がある局面は `captureLion`。
+- `createGameController(engine, config?)`: `config.cpuDelayMs`（既定 400）。`GameController.retry()` と `GameView.error: string | null` を追加（エンジン失敗時の表示と再試行）。
+- 人間が後手のときは盤を 180° 回転し、自分の駒が下側に来るように表示する。
+- undo は終局後は不可。
